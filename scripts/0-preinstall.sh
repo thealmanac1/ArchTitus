@@ -98,6 +98,52 @@ subvolumesetup () {
     mkdir -p /mnt/{home,var/log,.snapshots}
 # mount subvolumes
     mountallsubvol
+}
+
+if [[ "${DISK}" =~ "nvme" ]]; then
+    partition2=${DISK}p2
+    partition3=${DISK}p3
+else
+    partition2=${DISK}2
+    partition3=${DISK}3
+fi
+
+if [[ "${FS}" == "btrfs" ]]; then
+    mkfs.vfat -F32 -n "EFIBOOT" ${partition2}
+    mkfs.btrfs -L ROOT ${partition3} -f
+    mount -t btrfs ${partition3} /mnt
+    subvolumesetup
+elif [[ "${FS}" == "ext4" ]]; then
+    mkfs.vfat -F32 -n "EFIBOOT" ${partition2}
+    mkfs.ext4 -L ROOT ${partition3}
+    mount -t ext4 ${partition3} /mnt
+elif [[ "${FS}" == "luks" ]]; then
+    mkfs.vfat -F32 -n "EFIBOOT" ${partition2}
+# enter luks password to cryptsetup and format root partition
+    echo -n "${LUKS_PASSWORD}" | cryptsetup -y -v luksFormat ${partition3} -
+# open luks container and ROOT will be place holder 
+    echo -n "${LUKS_PASSWORD}" | cryptsetup open ${partition3} ROOT -
+# now format that container
+    mkfs.btrfs -L ROOT ${partition3}
+# create subvolumes for btrfs
+    mount -t btrfs ${partition3} /mnt
+    subvolumesetup
+# store uuid of encrypted partition for grub
+    echo ENCRYPTED_PARTITION_UUID=$(blkid -s UUID -o value ${partition3}) >> $CONFIGS_DIR/setup.conf
+fi
+
+# mount target
+mkdir -p /mnt/boot/efi
+mount -t vfat -L EFIBOOT /mnt/boot/
+
+if ! grep -qs '/mnt' /proc/mounts; then
+    echo "Drive is not mounted can not continue"
+    echo "Rebooting in 3 Seconds ..." && sleep 1
+    echo "Rebooting in 2 Seconds ..." && sleep 1
+    echo "Rebooting in 1 Second ..." && sleep 1
+    reboot now
+fi
+echo -ne "
 -------------------------------------------------------------------------
                     Arch Install on Main Drive
 -------------------------------------------------------------------------
@@ -145,3 +191,4 @@ echo -ne "
                     SYSTEM READY FOR 1-setup.sh
 -------------------------------------------------------------------------
 "
+
